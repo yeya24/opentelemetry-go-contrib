@@ -1,25 +1,22 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
-package otelaws
+package otelaws // import "go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-sdk-go-v2/otelaws"
 
 import (
+	"context"
+
+	"github.com/aws/smithy-go/middleware"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 )
 
 type config struct {
-	TracerProvider trace.TracerProvider
+	TracerProvider    trace.TracerProvider
+	TextMapPropagator propagation.TextMapPropagator
+	AttributeBuilders []AttributeBuilder
 }
 
 // Option applies an option value.
@@ -42,5 +39,36 @@ func WithTracerProvider(provider trace.TracerProvider) Option {
 		if provider != nil {
 			cfg.TracerProvider = provider
 		}
+	})
+}
+
+// WithTextMapPropagator specifies a Text Map Propagator to use when propagating context.
+// If none is specified, the global TextMapPropagator is used.
+func WithTextMapPropagator(propagator propagation.TextMapPropagator) Option {
+	return optionFunc(func(cfg *config) {
+		if propagator != nil {
+			cfg.TextMapPropagator = propagator
+		}
+	})
+}
+
+// WithAttributeSetter specifies an attribute setter function for setting service specific attributes.
+// If none is specified, the service will be determined by the DefaultAttributeBuilder function and the corresponding attributes will be included.
+func WithAttributeSetter(attributesetters ...AttributeSetter) Option {
+	var attributeBuilders []AttributeBuilder
+	for _, setter := range attributesetters {
+		attributeBuilders = append(attributeBuilders, func(ctx context.Context, in middleware.InitializeInput, out middleware.InitializeOutput) []attribute.KeyValue {
+			return setter(ctx, in)
+		})
+	}
+
+	return WithAttributeBuilder(attributeBuilders...)
+}
+
+// WithAttributeBuilder specifies an attribute setter function for setting service specific attributes.
+// If none is specified, the service will be determined by the DefaultAttributeBuilder function and the corresponding attributes will be included.
+func WithAttributeBuilder(attributeBuilders ...AttributeBuilder) Option {
+	return optionFunc(func(cfg *config) {
+		cfg.AttributeBuilders = append(cfg.AttributeBuilders, attributeBuilders...)
 	})
 }

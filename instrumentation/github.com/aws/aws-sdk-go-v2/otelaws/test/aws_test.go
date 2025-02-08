@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package test
 
@@ -23,6 +12,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
 	"github.com/aws/aws-sdk-go-v2/service/route53/types"
+	smithyauth "github.com/aws/smithy-go/auth"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -34,6 +25,14 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
+type route53AuthResolver struct{}
+
+func (r *route53AuthResolver) ResolveAuthSchemes(context.Context, *route53.AuthResolverParameters) ([]*smithyauth.Option, error) {
+	return []*smithyauth.Option{
+		{SchemeID: smithyauth.SchemeIDAnonymous},
+	}, nil
+}
+
 func TestAppendMiddlewares(t *testing.T) {
 	cases := map[string]struct {
 		responseStatus     int
@@ -44,7 +43,7 @@ func TestAppendMiddlewares(t *testing.T) {
 		expectedStatusCode int
 	}{
 		"invalidChangeBatchError": {
-			responseStatus: 500,
+			responseStatus: http.StatusInternalServerError,
 			responseBody: []byte(`<?xml version="1.0" encoding="UTF-8"?>
 		<InvalidChangeBatch xmlns="https://route53.amazonaws.com/doc/2013-04-01/">
 		  <Messages>
@@ -55,11 +54,11 @@ func TestAppendMiddlewares(t *testing.T) {
 			expectedRegion:     "us-east-1",
 			expectedError:      codes.Error,
 			expectedRequestID:  "b25f48e8-84fd-11e6-80d9-574e0c4664cb",
-			expectedStatusCode: 500,
+			expectedStatusCode: http.StatusInternalServerError,
 		},
 
 		"standardRestXMLError": {
-			responseStatus: 404,
+			responseStatus: http.StatusNotFound,
 			responseBody: []byte(`<?xml version="1.0"?>
 		<ErrorResponse xmlns="http://route53.amazonaws.com/doc/2016-09-07/">
 		  <Error>
@@ -73,11 +72,11 @@ func TestAppendMiddlewares(t *testing.T) {
 			expectedRegion:     "us-west-1",
 			expectedError:      codes.Error,
 			expectedRequestID:  "1234567890A",
-			expectedStatusCode: 404,
+			expectedStatusCode: http.StatusNotFound,
 		},
 
 		"Success response": {
-			responseStatus: 200,
+			responseStatus: http.StatusOK,
 			responseBody: []byte(`<?xml version="1.0" encoding="UTF-8"?>
 		<ChangeResourceRecordSetsResponse>
    			<ChangeInfo>
@@ -86,12 +85,12 @@ func TestAppendMiddlewares(t *testing.T) {
    		</ChangeInfo>
 		</ChangeResourceRecordSetsResponse>`),
 			expectedRegion:     "us-west-2",
-			expectedStatusCode: 200,
+			expectedStatusCode: http.StatusOK,
 		},
 	}
 
 	for name, c := range cases {
-		server := httptest.NewServer(http.HandlerFunc(
+		srv := httptest.NewServer(http.HandlerFunc(
 			func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(c.responseStatus)
 				_, err := w.Write(c.responseBody)
@@ -99,26 +98,21 @@ func TestAppendMiddlewares(t *testing.T) {
 					t.Fatal(err)
 				}
 			}))
-		defer server.Close()
 
 		t.Run(name, func(t *testing.T) {
 			sr := tracetest.NewSpanRecorder()
 			provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
 
-			svc := route53.NewFromConfig(aws.Config{
-				Region: c.expectedRegion,
-				EndpointResolverWithOptions: aws.EndpointResolverWithOptionsFunc(
-					func(service, region string, _ ...interface{}) (aws.Endpoint, error) {
-						return aws.Endpoint{
-							URL:         server.URL,
-							SigningName: "route53",
-						}, nil
-					},
-				),
-				Retryer: func() aws.Retryer {
-					return aws.NopRetryer{}
+			svc := route53.New(route53.Options{
+				Region:             c.expectedRegion,
+				BaseEndpoint:       &srv.URL,
+				AuthSchemeResolver: &route53AuthResolver{},
+				AuthSchemes: []smithyhttp.AuthScheme{
+					smithyhttp.NewAnonymousScheme(),
 				},
+				Retryer: aws.NopRetryer{},
 			})
+
 			_, err := svc.ChangeResourceRecordSets(context.Background(), &route53.ChangeResourceRecordSetsInput{
 				ChangeBatch: &types.ChangeBatch{
 					Changes: []types.Change{},
@@ -132,14 +126,14 @@ func TestAppendMiddlewares(t *testing.T) {
 			if c.expectedError == codes.Unset {
 				assert.NoError(t, err)
 			} else {
-				assert.NotNil(t, err)
+				assert.Error(t, err)
 			}
 
 			spans := sr.Ended()
 			require.Len(t, spans, 1)
 			span := spans[0]
 
-			assert.Equal(t, "Route 53", span.Name())
+			assert.Equal(t, "Route 53.ChangeResourceRecordSets", span.Name())
 			assert.Equal(t, trace.SpanKindClient, span.SpanKind())
 			assert.Equal(t, c.expectedError, span.Status().Code)
 			attrs := span.Attributes()
@@ -147,10 +141,12 @@ func TestAppendMiddlewares(t *testing.T) {
 			if c.expectedRequestID != "" {
 				assert.Contains(t, attrs, attribute.String("aws.request_id", c.expectedRequestID))
 			}
-			assert.Contains(t, attrs, attribute.String("aws.service", "Route 53"))
+			assert.Contains(t, attrs, attribute.String("rpc.system", "aws-api"))
+			assert.Contains(t, attrs, attribute.String("rpc.service", "Route 53"))
 			assert.Contains(t, attrs, attribute.String("aws.region", c.expectedRegion))
-			assert.Contains(t, attrs, attribute.String("aws.operation", "ChangeResourceRecordSets"))
+			assert.Contains(t, attrs, attribute.String("rpc.method", "ChangeResourceRecordSets"))
 		})
 
+		srv.Close()
 	}
 }
