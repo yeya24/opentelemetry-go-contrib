@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package xrayconfig
 
@@ -47,20 +36,18 @@ func (s *SpansStorage) AddSpans(request *collectortracepb.ExportTraceServiceRequ
 		if existingRs, ok := s.rsm[rstr]; !ok {
 			s.rsm[rstr] = rs
 			// TODO (rghetia): Add support for library Info.
-			if len(rs.InstrumentationLibrarySpans) == 0 {
-				rs.InstrumentationLibrarySpans = []*tracepb.InstrumentationLibrarySpans{
+			if len(rs.ScopeSpans) == 0 {
+				rs.ScopeSpans = []*tracepb.ScopeSpans{
 					{
 						Spans: []*tracepb.Span{},
 					},
 				}
 			}
-			s.spanCount += len(rs.InstrumentationLibrarySpans[0].Spans)
+			s.spanCount += len(rs.ScopeSpans[0].Spans)
 		} else {
-			if len(rs.InstrumentationLibrarySpans) > 0 {
-				newSpans := rs.InstrumentationLibrarySpans[0].GetSpans()
-				existingRs.InstrumentationLibrarySpans[0].Spans =
-					append(existingRs.InstrumentationLibrarySpans[0].Spans,
-						newSpans...)
+			if len(rs.ScopeSpans) > 0 {
+				newSpans := rs.ScopeSpans[0].GetSpans()
+				existingRs.ScopeSpans[0].Spans = append(existingRs.ScopeSpans[0].Spans, newSpans...)
 				s.spanCount += len(newSpans)
 			}
 		}
@@ -71,7 +58,7 @@ func (s *SpansStorage) AddSpans(request *collectortracepb.ExportTraceServiceRequ
 func (s *SpansStorage) GetSpans() []*tracepb.Span {
 	spans := make([]*tracepb.Span, 0, s.spanCount)
 	for _, rs := range s.rsm {
-		spans = append(spans, rs.InstrumentationLibrarySpans[0].Spans...)
+		spans = append(spans, rs.ScopeSpans[0].Spans...)
 	}
 	return spans
 }
