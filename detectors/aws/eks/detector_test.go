@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package eks
 
@@ -24,32 +13,32 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/resource"
-	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
 type MockDetectorUtils struct {
 	mock.Mock
 }
 
-// Mock function for fileExists()
+// Mock function for fileExists().
 func (detectorUtils *MockDetectorUtils) fileExists(filename string) bool {
 	args := detectorUtils.Called(filename)
 	return args.Bool(0)
 }
 
-// Mock function for getConfigMap()
+// Mock function for getConfigMap().
 func (detectorUtils *MockDetectorUtils) getConfigMap(_ context.Context, namespace string, name string) (map[string]string, error) {
 	args := detectorUtils.Called(namespace, name)
 	return args.Get(0).(map[string]string), args.Error(1)
 }
 
-// Mock function for getContainerID()
+// Mock function for getContainerID().
 func (detectorUtils *MockDetectorUtils) getContainerID() (string, error) {
 	args := detectorUtils.Called()
 	return args.String(0), args.Error(1)
 }
 
-// Tests EKS resource detector running in EKS environment
+// Tests EKS resource detector running in EKS environment.
 func TestEks(t *testing.T) {
 	detectorUtils := new(MockDetectorUtils)
 
@@ -64,8 +53,8 @@ func TestEks(t *testing.T) {
 	eksResourceLabels := []attribute.KeyValue{
 		semconv.CloudProviderAWS,
 		semconv.CloudPlatformAWSEKS,
-		semconv.K8SClusterNameKey.String("my-cluster"),
-		semconv.ContainerIDKey.String("0123456789A"),
+		semconv.K8SClusterName("my-cluster"),
+		semconv.ContainerID("0123456789A"),
 	}
 	expectedResource := resource.NewWithAttributes(semconv.SchemaURL, eksResourceLabels...)
 
@@ -78,7 +67,7 @@ func TestEks(t *testing.T) {
 	detectorUtils.AssertExpectations(t)
 }
 
-// Tests EKS resource detector not running in EKS environment
+// Tests EKS resource detector not running in EKS environment.
 func TestNotEKS(t *testing.T) {
 	detectorUtils := new(MockDetectorUtils)
 

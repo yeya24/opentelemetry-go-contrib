@@ -1,21 +1,11 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
-package ec2
+package ec2 // import "go.opentelemetry.io/contrib/detectors/aws/ec2"
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 
@@ -25,7 +15,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/resource"
-	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
 type config struct {
@@ -42,6 +32,7 @@ func newConfig(options ...Option) *config {
 	return c
 }
 
+// Option applies an EC2 detector configuration option.
 type Option interface {
 	apply(*config)
 }
@@ -52,7 +43,7 @@ func (fn optionFunc) apply(c *config) {
 	fn(c)
 }
 
-// WithClient sets the ec2metadata client in config
+// WithClient sets the ec2metadata client in config.
 func WithClient(t Client) Option {
 	return optionFunc(func(c *config) {
 		c.c = t
@@ -63,12 +54,12 @@ func (cfg *config) getClient() Client {
 	return cfg.c
 }
 
-// resource detector collects resource information from EC2 environment
+// resource detector collects resource information from EC2 environment.
 type resourceDetector struct {
 	c Client
 }
 
-// Client implements methods to capture EC2 environment metadata information
+// Client implements methods to capture EC2 environment metadata information.
 type Client interface {
 	Available() bool
 	GetInstanceIdentityDocument() (ec2metadata.EC2InstanceIdentityDocument, error)
@@ -78,7 +69,7 @@ type Client interface {
 // compile time assertion that resourceDetector implements the resource.Detector interface.
 var _ resource.Detector = (*resourceDetector)(nil)
 
-//NewResourceDetector returns a resource detector that will detect AWS EC2 resources.
+// NewResourceDetector returns a resource detector that will detect AWS EC2 resources.
 func NewResourceDetector(opts ...Option) resource.Detector {
 	c := newConfig(opts...)
 	return &resourceDetector{c.getClient()}
@@ -103,12 +94,12 @@ func (detector *resourceDetector) Detect(ctx context.Context) (*resource.Resourc
 	attributes := []attribute.KeyValue{
 		semconv.CloudProviderAWS,
 		semconv.CloudPlatformAWSEC2,
-		semconv.CloudRegionKey.String(doc.Region),
-		semconv.CloudAvailabilityZoneKey.String(doc.AvailabilityZone),
-		semconv.CloudAccountIDKey.String(doc.AccountID),
-		semconv.HostIDKey.String(doc.InstanceID),
-		semconv.HostImageIDKey.String(doc.ImageID),
-		semconv.HostTypeKey.String(doc.InstanceType),
+		semconv.CloudRegion(doc.Region),
+		semconv.CloudAvailabilityZone(doc.AvailabilityZone),
+		semconv.CloudAccountID(doc.AccountID),
+		semconv.HostID(doc.InstanceID),
+		semconv.HostImageID(doc.ImageID),
+		semconv.HostType(doc.InstanceType),
 	}
 
 	m := &metadata{client: client}
@@ -149,7 +140,8 @@ func (m *metadata) add(k attribute.Key, n string) {
 		return
 	}
 
-	rf, ok := err.(awserr.RequestFailure)
+	var rf awserr.RequestFailure
+	ok := errors.As(err, &rf)
 	if !ok {
 		m.errs = append(m.errs, fmt.Errorf("%q: %w", n, err))
 		return

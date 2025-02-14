@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package main
 
@@ -18,7 +7,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net/http"
 	"time"
@@ -30,16 +19,16 @@ import (
 	stdout "go.opentelemetry.io/otel/exporters/stdout/stdouttrace"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.20.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
-func initTracer() *sdktrace.TracerProvider {
+func initTracer() (*sdktrace.TracerProvider, error) {
 	// Create stdout exporter to be able to retrieve
 	// the collected spans.
 	exporter, err := stdout.New(stdout.WithPrettyPrint())
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 
 	// For the demonstration, use sdktrace.AlwaysSample sampler to sample all traces.
@@ -50,11 +39,14 @@ func initTracer() *sdktrace.TracerProvider {
 	)
 	otel.SetTracerProvider(tp)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
-	return tp
+	return tp, err
 }
 
 func main() {
-	tp := initTracer()
+	tp, err := initTracer()
+	if err != nil {
+		log.Fatal(err)
+	}
 	defer func() {
 		if err := tp.Shutdown(context.Background()); err != nil {
 			log.Printf("Error shutting down tracer provider: %v", err)
@@ -71,24 +63,23 @@ func main() {
 	var body []byte
 
 	tr := otel.Tracer("example/client")
-	err := func(ctx context.Context) error {
-		ctx, span := tr.Start(ctx, "say hello", trace.WithAttributes(semconv.PeerServiceKey.String("ExampleService")))
+	err = func(ctx context.Context) error {
+		ctx, span := tr.Start(ctx, "say hello", trace.WithAttributes(semconv.PeerService("ExampleService")))
 		defer span.End()
-		req, _ := http.NewRequestWithContext(ctx, "GET", *url, nil)
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, *url, nil)
 
 		fmt.Printf("Sending request...\n")
 		res, err := client.Do(req)
 		if err != nil {
 			panic(err)
 		}
-		body, err = ioutil.ReadAll(res.Body)
+		body, err = io.ReadAll(res.Body)
 		_ = res.Body.Close()
 
 		return err
 	}(ctx)
-
 	if err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 
 	fmt.Printf("Response Received: %s\n\n\n", body)
