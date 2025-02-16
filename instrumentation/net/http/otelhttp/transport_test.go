@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package otelhttp
 
@@ -19,7 +8,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -34,7 +22,7 @@ import (
 )
 
 func TestTransportFormatter(t *testing.T) {
-	var httpMethods = []struct {
+	httpMethods := []struct {
 		name     string
 		method   string
 		expected string
@@ -99,7 +87,6 @@ func TestTransportFormatter(t *testing.T) {
 			}
 		})
 	}
-
 }
 
 func TestTransportBasics(t *testing.T) {
@@ -137,8 +124,13 @@ func TestTransportBasics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() {
+		if err := res.Body.Close(); err != nil {
+			t.Errorf("close response body: %v", err)
+		}
+	}()
 
-	body, err := ioutil.ReadAll(res.Body)
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,8 +175,13 @@ func TestNilTransport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer func() {
+		if err := res.Body.Close(); err != nil {
+			t.Errorf("close response body: %v", err)
+		}
+	}()
 
-	body, err := ioutil.ReadAll(res.Body)
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,6 +200,7 @@ type readCloser struct {
 func (rc readCloser) Read(p []byte) (n int, err error) {
 	return readSize, rc.readErr
 }
+
 func (rc readCloser) Close() error {
 	return rc.closeErr
 }
@@ -229,7 +227,7 @@ func (s *span) SetStatus(c codes.Code, d string) {
 	s.statusCode, s.statusDesc = c, d
 }
 
-func (s *span) assert(t *testing.T, ended bool, err error, c codes.Code, d string) {
+func (s *span) assert(t *testing.T, ended bool, err error, c codes.Code, d string) { // nolint: revive  // ended is not a control flag.
 	if ended {
 		assert.True(t, s.ended, "not ended")
 	} else {
@@ -248,45 +246,72 @@ func (s *span) assert(t *testing.T, ended bool, err error, c codes.Code, d strin
 
 func TestWrappedBodyRead(t *testing.T) {
 	s := new(span)
-	wb := &wrappedBody{span: trace.Span(s), body: readCloser{}}
+	called := false
+	record := func(numBytes int64) { called = true }
+	wb := newWrappedBody(s, record, readCloser{})
 	n, err := wb.Read([]byte{})
 	assert.Equal(t, readSize, n, "wrappedBody returned wrong bytes")
 	assert.NoError(t, err)
 	s.assert(t, false, nil, codes.Unset, "")
+	assert.False(t, called, "record should not have been called")
 }
 
 func TestWrappedBodyReadEOFError(t *testing.T) {
 	s := new(span)
-	wb := &wrappedBody{span: trace.Span(s), body: readCloser{readErr: io.EOF}}
+	called := false
+	numRecorded := int64(0)
+	record := func(numBytes int64) {
+		called = true
+		numRecorded = numBytes
+	}
+	wb := newWrappedBody(s, record, readCloser{readErr: io.EOF})
 	n, err := wb.Read([]byte{})
 	assert.Equal(t, readSize, n, "wrappedBody returned wrong bytes")
 	assert.Equal(t, io.EOF, err)
 	s.assert(t, true, nil, codes.Unset, "")
+	assert.True(t, called, "record should have been called")
+	assert.Equal(t, int64(readSize), numRecorded, "record recorded wrong number of bytes")
 }
 
 func TestWrappedBodyReadError(t *testing.T) {
 	s := new(span)
+	called := false
+	record := func(int64) { called = true }
 	expectedErr := errors.New("test")
-	wb := &wrappedBody{span: trace.Span(s), body: readCloser{readErr: expectedErr}}
+	wb := newWrappedBody(s, record, readCloser{readErr: expectedErr})
 	n, err := wb.Read([]byte{})
 	assert.Equal(t, readSize, n, "wrappedBody returned wrong bytes")
 	assert.Equal(t, expectedErr, err)
 	s.assert(t, false, expectedErr, codes.Error, expectedErr.Error())
+	assert.False(t, called, "record should not have been called")
 }
 
 func TestWrappedBodyClose(t *testing.T) {
 	s := new(span)
-	wb := &wrappedBody{span: trace.Span(s), body: readCloser{}}
+	called := false
+	record := func(int64) { called = true }
+	wb := newWrappedBody(s, record, readCloser{})
 	assert.NoError(t, wb.Close())
 	s.assert(t, true, nil, codes.Unset, "")
+	assert.True(t, called, "record should have been called")
+}
+
+func TestWrappedBodyClosePanic(t *testing.T) {
+	s := new(span)
+	var body io.ReadCloser
+	wb := newWrappedBody(s, func(n int64) {}, body)
+	assert.NotPanics(t, func() { wb.Close() }, "nil body should not panic on close")
 }
 
 func TestWrappedBodyCloseError(t *testing.T) {
 	s := new(span)
+	called := false
+	record := func(int64) { called = true }
 	expectedErr := errors.New("test")
-	wb := &wrappedBody{span: trace.Span(s), body: readCloser{closeErr: expectedErr}}
+	wb := newWrappedBody(s, record, readCloser{closeErr: expectedErr})
 	assert.Equal(t, expectedErr, wb.Close())
 	s.assert(t, true, nil, codes.Unset, "")
+	assert.True(t, called, "record should have been called")
 }
 
 type readWriteCloser struct {
@@ -302,12 +327,12 @@ func (rwc readWriteCloser) Write([]byte) (int, error) {
 }
 
 func TestNewWrappedBodyReadWriteCloserImplementation(t *testing.T) {
-	wb := newWrappedBody(nil, readWriteCloser{})
+	wb := newWrappedBody(nil, func(n int64) {}, readWriteCloser{})
 	assert.Implements(t, (*io.ReadWriteCloser)(nil), wb)
 }
 
 func TestNewWrappedBodyReadCloserImplementation(t *testing.T) {
-	wb := newWrappedBody(nil, readCloser{})
+	wb := newWrappedBody(nil, func(n int64) {}, readCloser{})
 	assert.Implements(t, (*io.ReadCloser)(nil), wb)
 
 	_, ok := wb.(io.ReadWriteCloser)
@@ -318,7 +343,7 @@ func TestWrappedBodyWrite(t *testing.T) {
 	s := new(span)
 	var rwc io.ReadWriteCloser
 	assert.NotPanics(t, func() {
-		rwc = newWrappedBody(s, readWriteCloser{}).(io.ReadWriteCloser)
+		rwc = newWrappedBody(s, func(n int64) {}, readWriteCloser{}).(io.ReadWriteCloser)
 	})
 
 	n, err := rwc.Write([]byte{})
@@ -332,9 +357,11 @@ func TestWrappedBodyWriteError(t *testing.T) {
 	expectedErr := errors.New("test")
 	var rwc io.ReadWriteCloser
 	assert.NotPanics(t, func() {
-		rwc = newWrappedBody(s, readWriteCloser{
-			writeErr: expectedErr,
-		}).(io.ReadWriteCloser)
+		rwc = newWrappedBody(s,
+			func(n int64) {},
+			readWriteCloser{
+				writeErr: expectedErr,
+			}).(io.ReadWriteCloser)
 	})
 	n, err := rwc.Write([]byte{})
 	assert.Equal(t, writeSize, n, "wrappedBody returned wrong bytes")
@@ -355,12 +382,12 @@ func TestTransportProtocolSwitch(t *testing.T) {
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		conn, buf, err := w.(http.Hijacker).Hijack()
-		require.NoError(t, err)
+		assert.NoError(t, err)
 
 		_, err = buf.Write(response)
-		require.NoError(t, err)
-		require.NoError(t, buf.Flush())
-		require.NoError(t, conn.Close())
+		assert.NoError(t, err)
+		assert.NoError(t, buf.Flush())
+		assert.NoError(t, conn.Close())
 	}))
 	defer ts.Close()
 
@@ -374,4 +401,33 @@ func TestTransportProtocolSwitch(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, res.Body.Close()) })
 
 	assert.Implements(t, (*io.ReadWriteCloser)(nil), res.Body, "invalid body returned for protocol switch")
+}
+
+func TestTransportOriginRequestNotModify(t *testing.T) {
+	prop := propagation.TraceContext{}
+
+	ctx := context.Background()
+	sc := trace.NewSpanContext(trace.SpanContextConfig{
+		TraceID: trace.TraceID{0x01},
+		SpanID:  trace.SpanID{0x01},
+	})
+	ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	r, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL, http.NoBody)
+	require.NoError(t, err)
+
+	expectedRequest := r.Clone(r.Context())
+
+	c := http.Client{Transport: NewTransport(http.DefaultTransport, WithPropagators(prop))}
+	res, err := c.Do(r)
+	require.NoError(t, err)
+
+	t.Cleanup(func() { require.NoError(t, res.Body.Close()) })
+
+	assert.Equal(t, expectedRequest, r)
 }
