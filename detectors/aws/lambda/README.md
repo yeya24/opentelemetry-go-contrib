@@ -46,12 +46,14 @@ Now your `TracerProvider` will have the following resource attributes and attach
 |`cloud.region` | us-east-1 
 |`faas.name` | MyLambdaFunction 
 |`faas.version` | $LATEST
+|`faas.instance` | 2021/06/28/[$LATEST]2f399eb14537447da05ab2a2e39309de
+|`faas.max_memory`| 128
 
 Of note, `faas.id` and `cloud.account.id` are not set by the Lambda resource detector because they are not available outside a Lambda invocation. For this reason, when using the AWS Lambda Instrumentation these attributes are set as additional span attributes.
 
 ## Useful links
 
-- For more on FaaS attribute conventions, visit <https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/trace/semantic_conventions/faas.md>
+- For more on FaaS attribute conventions, visit <https://opentelemetry.io/docs/specs/semconv/faas/faas-spans/>
 - For more information on OpenTelemetry, visit: <https://opentelemetry.io/>
 - For more about OpenTelemetry Go: <https://github.com/open-telemetry/opentelemetry-go>
 - For help or feedback on this project, join us in [GitHub Discussions][discussions-url]
