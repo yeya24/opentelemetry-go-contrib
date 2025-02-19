@@ -1,23 +1,12 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
-package eks
+package eks // import "go.opentelemetry.io/contrib/detectors/aws/eks"
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"regexp"
 	"strings"
@@ -28,11 +17,11 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/resource"
-	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 )
 
 const (
-	k8sTokenPath      = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+	k8sTokenPath      = "/var/run/secrets/kubernetes.io/serviceaccount/token" //nolint:gosec // False positive G101: Potential hardcoded credentials. The detector only check if the token exists.
 	k8sCertPath       = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
 	authConfigmapNS   = "kube-system"
 	authConfigmapName = "aws-auth"
@@ -49,12 +38,12 @@ type detectorUtils interface {
 	getContainerID() (string, error)
 }
 
-// This struct will implement the detectorUtils interface
+// This struct will implement the detectorUtils interface.
 type eksDetectorUtils struct {
 	clientset *kubernetes.Clientset
 }
 
-// resourceDetector for detecting resources running on Amazon EKS
+// resourceDetector for detecting resources running on Amazon EKS.
 type resourceDetector struct {
 	utils detectorUtils
 	err   error
@@ -100,7 +89,7 @@ func (detector *resourceDetector) Detect(ctx context.Context) (*resource.Resourc
 		return nil, err
 	}
 	if clusterName != "" {
-		attributes = append(attributes, semconv.K8SClusterNameKey.String(clusterName))
+		attributes = append(attributes, semconv.K8SClusterName(clusterName))
 	}
 
 	// Get containerID and append to attributes
@@ -109,7 +98,7 @@ func (detector *resourceDetector) Detect(ctx context.Context) (*resource.Resourc
 		return nil, err
 	}
 	if containerID != "" {
-		attributes = append(attributes, semconv.ContainerIDKey.String(containerID))
+		attributes = append(attributes, semconv.ContainerID(containerID))
 	}
 
 	// Return new resource object with clusterName and containerID as attributes
@@ -131,7 +120,7 @@ func isEKS(ctx context.Context, utils detectorUtils) (bool, error) {
 	return awsAuth != nil, nil
 }
 
-// newK8sDetectorUtils creates the Kubernetes clientset
+// newK8sDetectorUtils creates the Kubernetes clientset.
 func newK8sDetectorUtils() (*eksDetectorUtils, error) {
 	// Get cluster configuration
 	confs, err := rest.InClusterConfig()
@@ -142,13 +131,13 @@ func newK8sDetectorUtils() (*eksDetectorUtils, error) {
 	// Create clientset using generated configuration
 	clientset, err := kubernetes.NewForConfig(confs)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create clientset for Kubernetes client")
+		return nil, errors.New("failed to create clientset for Kubernetes client")
 	}
 
 	return &eksDetectorUtils{clientset: clientset}, nil
 }
 
-// isK8s checks if the current environment is running in a Kubernetes environment
+// isK8s checks if the current environment is running in a Kubernetes environment.
 func isK8s(utils detectorUtils) bool {
 	return utils.fileExists(k8sTokenPath) && utils.fileExists(k8sCertPath)
 }
@@ -159,7 +148,7 @@ func (eksUtils eksDetectorUtils) fileExists(filename string) bool {
 	return err == nil && !info.IsDir()
 }
 
-// getConfigMap retrieves the configuration map from the k8s API
+// getConfigMap retrieves the configuration map from the k8s API.
 func (eksUtils eksDetectorUtils) getConfigMap(ctx context.Context, namespace string, name string) (map[string]string, error) {
 	cm, err := eksUtils.clientset.CoreV1().ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
@@ -169,7 +158,7 @@ func (eksUtils eksDetectorUtils) getConfigMap(ctx context.Context, namespace str
 	return cm.Data, nil
 }
 
-// getClusterName retrieves the clusterName resource attribute
+// getClusterName retrieves the clusterName resource attribute.
 func getClusterName(ctx context.Context, utils detectorUtils) (string, error) {
 	resp, err := utils.getConfigMap(ctx, cwConfigmapNS, cwConfigmapName)
 	if err != nil {
@@ -181,7 +170,7 @@ func getClusterName(ctx context.Context, utils detectorUtils) (string, error) {
 
 // getContainerID returns the containerID if currently running within a container.
 func (eksUtils eksDetectorUtils) getContainerID() (string, error) {
-	fileData, err := ioutil.ReadFile(defaultCgroupPath)
+	fileData, err := os.ReadFile(defaultCgroupPath)
 	if err != nil {
 		return "", fmt.Errorf("getContainerID() error: cannot read file with path %s: %w", defaultCgroupPath, err)
 	}

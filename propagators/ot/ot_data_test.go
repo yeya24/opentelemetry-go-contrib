@@ -1,20 +1,11 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package ot_test
 
 import (
+	"strings"
+
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -38,11 +29,13 @@ var (
 	traceID32    = trace.TraceID{0xa1, 0xce, 0x92, 0x9d, 0x0e, 0x0e, 0x47, 0x36, 0xa3, 0xce, 0x92, 0x9d, 0x0e, 0x0e, 0x47, 0x36}
 	spanID       = trace.SpanID{0x00, 0xf0, 0x67, 0xaa, 0x0b, 0xa9, 0x02, 0xb7}
 	emptyBaggage = map[string]string{}
-	// TODO: once baggage extraction is supported, re-enable this
-	// baggageSet   = attribute.NewSet(
-	// 	attribute.String(baggageKey, baggageValue),
-	// 	attribute.String(baggageKey2, baggageValue2),
-	// )
+	baggageSet   = map[string]string{
+		baggageKey: baggageValue,
+	}
+	baggageSet2 = map[string]string{
+		baggageKey:  baggageValue,
+		baggageKey2: baggageValue2,
+	}
 )
 
 type extractTest struct {
@@ -85,9 +78,22 @@ var extractHeaders = []extractTest{
 			SpanID:     spanID,
 			TraceFlags: trace.FlagsSampled,
 		},
-		emptyBaggage,
-		// TODO: once baggage extraction is supported, re-enable this
-		// &baggageSet,
+		baggageSet,
+	},
+	{
+		"baggage multiple values",
+		map[string]string{
+			traceIDHeader:  traceID32Str,
+			spanIDHeader:   spanIDStr,
+			sampledHeader:  "0",
+			baggageHeader:  baggageValue,
+			baggageHeader2: baggageValue2,
+		},
+		trace.SpanContextConfig{
+			TraceID: traceID32,
+			SpanID:  spanID,
+		},
+		baggageSet2,
 	},
 	{
 		"left padding 64 bit trace ID",
@@ -166,6 +172,48 @@ var invalidExtractHeaders = []extractTest{
 			traceIDHeader: traceID32Str,
 			spanIDHeader:  spanIDStr,
 			sampledHeader: "wired",
+		},
+	},
+	{
+		name: "invalid baggage key",
+		headers: map[string]string{
+			traceIDHeader:     traceID32Str,
+			spanIDHeader:      spanIDStr,
+			sampledHeader:     "1",
+			"ot-baggage-d–76": "test",
+		},
+		expected: trace.SpanContextConfig{
+			TraceID:    traceID32,
+			SpanID:     spanID,
+			TraceFlags: trace.FlagsSampled,
+		},
+	},
+	{
+		name: "invalid baggage value",
+		headers: map[string]string{
+			traceIDHeader: traceID32Str,
+			spanIDHeader:  spanIDStr,
+			sampledHeader: "1",
+			baggageHeader: "øtel",
+		},
+		expected: trace.SpanContextConfig{
+			TraceID:    traceID32,
+			SpanID:     spanID,
+			TraceFlags: trace.FlagsSampled,
+		},
+	},
+	{
+		name: "invalid baggage result (too large)",
+		headers: map[string]string{
+			traceIDHeader: traceID32Str,
+			spanIDHeader:  spanIDStr,
+			sampledHeader: "1",
+			baggageHeader: strings.Repeat("s", 8188),
+		},
+		expected: trace.SpanContextConfig{
+			TraceID:    traceID32,
+			SpanID:     spanID,
+			TraceFlags: trace.FlagsSampled,
 		},
 	},
 	{

@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package otellambda
 
@@ -54,6 +43,8 @@ func setEnvVars() {
 	_ = os.Setenv("AWS_LAMBDA_FUNCTION_NAME", "testFunction")
 	_ = os.Setenv("AWS_REGION", "us-texas-1")
 	_ = os.Setenv("AWS_LAMBDA_FUNCTION_VERSION", "$LATEST")
+	_ = os.Setenv("AWS_LAMBDA_LOG_STREAM_NAME", "2023/01/01/[$LATEST]5d1edb9e525d486696cf01a3503487bc")
+	_ = os.Setenv("AWS_LAMBDA_FUNCTION_MEMORY_SIZE", "128")
 	_ = os.Setenv("_X_AMZN_TRACE_ID", "Root=1-5759e988-bd862e3fe1be46a994272793;Parent=53995c3f42cd8ad8;Sampled=1")
 }
 
@@ -133,7 +124,7 @@ func TestLambdaHandlerSignatures(t *testing.T) {
 			lambdaHandler := InstrumentHandler(testCase.handler)
 			handler := reflect.ValueOf(lambdaHandler)
 			resp := handler.Call(testCase.args)
-			assert.Equal(t, 2, len(resp))
+			assert.Len(t, resp, 2)
 			assert.Equal(t, testCase.expected, resp[1].Interface())
 		})
 	}
@@ -237,7 +228,7 @@ func TestHandlerInvokes(t *testing.T) {
 				args = append(args, reflect.ValueOf(testCase.input))
 			}
 			response := handler.Call(args)
-			assert.Equal(t, 2, len(response))
+			assert.Len(t, response, 2)
 			if testCase.expected.err != nil {
 				assert.Equal(t, testCase.expected.err, response[handlerType.NumOut()-1].Interface())
 			} else {

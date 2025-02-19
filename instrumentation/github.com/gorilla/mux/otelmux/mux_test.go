@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package otelmux
 
@@ -21,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gorilla/mux"
@@ -117,28 +107,30 @@ type testResponseWriter struct {
 func (rw *testResponseWriter) Header() http.Header {
 	return rw.writer.Header()
 }
+
 func (rw *testResponseWriter) Write(b []byte) (int, error) {
 	return rw.writer.Write(b)
 }
+
 func (rw *testResponseWriter) WriteHeader(statusCode int) {
 	rw.writer.WriteHeader(statusCode)
 }
 
-// implement Hijacker
+// implement Hijacker.
 func (rw *testResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return nil, nil, nil
 }
 
-// implement Pusher
+// implement Pusher.
 func (rw *testResponseWriter) Push(target string, opts *http.PushOptions) error {
 	return nil
 }
 
-// implement Flusher
+// implement Flusher.
 func (rw *testResponseWriter) Flush() {
 }
 
-// implement io.ReaderFrom
+// implement io.ReaderFrom.
 func (rw *testResponseWriter) ReadFrom(r io.Reader) (n int64, err error) {
 	return 0, nil
 }
@@ -161,4 +153,102 @@ func TestResponseWriterInterfaces(t *testing.T) {
 	}
 
 	router.ServeHTTP(w, r)
+}
+
+func TestFilter(t *testing.T) {
+	prop := propagation.TraceContext{}
+
+	router := mux.NewRouter()
+	var calledHealth, calledTest int
+	router.Use(Middleware("foobar", WithFilter(func(r *http.Request) bool {
+		return r.URL.Path != "/health"
+	})))
+	router.HandleFunc("/health", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledHealth++
+		span := trace.SpanFromContext(r.Context())
+		assert.NotEqual(t, sc, span.SpanContext())
+		w.WriteHeader(http.StatusOK)
+	}))
+	router.HandleFunc("/test", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calledTest++
+		span := trace.SpanFromContext(r.Context())
+		assert.Equal(t, sc, span.SpanContext())
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	r := httptest.NewRequest("GET", "/health", nil)
+	ctx := trace.ContextWithRemoteSpanContext(context.Background(), sc)
+	prop.Inject(ctx, propagation.HeaderCarrier(r.Header))
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, r)
+
+	r = httptest.NewRequest("GET", "/test", nil)
+	ctx = trace.ContextWithRemoteSpanContext(context.Background(), sc)
+	prop.Inject(ctx, propagation.HeaderCarrier(r.Header))
+	w = httptest.NewRecorder()
+	router.ServeHTTP(w, r)
+
+	assert.Equal(t, 1, calledHealth, "failed to run test")
+	assert.Equal(t, 1, calledTest, "failed to run test")
+}
+
+func TestPassthroughSpanFromGlobalTracerWithBody(t *testing.T) {
+	expectedBody := `{"message":"successfully"}`
+	router := mux.NewRouter()
+	router.Use(Middleware("foobar"))
+
+	var called bool
+	router.HandleFunc("/user", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		got := trace.SpanFromContext(r.Context()).SpanContext()
+		assert.Equal(t, sc, got)
+
+		body, err := io.ReadAll(r.Body)
+		assert.NoError(t, err)
+		defer r.Body.Close()
+
+		assert.JSONEq(t, `{"name":"John Doe","age":30}`, string(body), "request body does not match")
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, err = w.Write([]byte(expectedBody))
+		assert.NoError(t, err)
+	})).Methods(http.MethodPost)
+
+	r := httptest.NewRequest(http.MethodPost, "/user", strings.NewReader(`{"name":"John Doe","age":30}`))
+	r.Header.Set("Content-Type", "application/json")
+	r = r.WithContext(trace.ContextWithRemoteSpanContext(context.Background(), sc))
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, r)
+
+	// Validate the assertions
+	assert.True(t, called, "failed to run test")
+	assert.Equal(t, http.StatusCreated, w.Code, "unexpected status code")
+	assert.JSONEq(t, expectedBody, w.Body.String(), "unexpected response body")
+}
+
+func TestHeaderAlreadyWrittenWhenFlushing(t *testing.T) {
+	var called bool
+
+	router := mux.NewRouter()
+	router.Use(Middleware("foobar"))
+
+	router.HandleFunc("/user/{id}", func(w http.ResponseWriter, r *http.Request) {
+		called = true
+
+		w.WriteHeader(http.StatusBadRequest)
+		f := w.(http.Flusher)
+		f.Flush()
+	})
+
+	r := httptest.NewRequest("GET", "/user/123", nil)
+	r = r.WithContext(trace.ContextWithRemoteSpanContext(context.Background(), sc))
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, r)
+
+	// Assertions
+	assert.True(t, called, "failed to run test")
+	assert.Equal(t, http.StatusBadRequest, w.Code, "Header was not set before flushing")
 }

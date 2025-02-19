@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package jaeger
 
@@ -26,13 +15,15 @@ import (
 )
 
 var (
-	traceID        = trace.TraceID{0, 0, 0, 0, 0, 0, 0, 0, 0x7b, 0, 0, 0, 0, 0, 0x1, 0xc8}
-	traceID128Str  = "00000000000000007b000000000001c8"
+	traceID        = trace.TraceID{0, 0, 0, 0, 0, 0, 0, 0, 0xb, 0, 0, 0, 0, 0, 0x1, 0xc8}
+	traceID128Str  = "00000000000000000b000000000001c8"
 	zeroTraceIDStr = "00000000000000000000000000000000"
-	traceID64Str   = "7b000000000001c8"
+	traceID64Str   = "0b000000000001c8"
+	traceID60Str   = "b000000000001c8"
 	spanID         = trace.SpanID{0, 0, 0, 0, 0, 0, 0, 0x7b}
 	zeroSpanIDStr  = "0000000000000000"
-	spanIDStr      = "000000000000007b"
+	spanID64Str    = "000000000000007b"
+	spanID60Str    = "00000000000007b"
 )
 
 func TestJaeger_Extract(t *testing.T) {
@@ -46,7 +37,7 @@ func TestJaeger_Extract(t *testing.T) {
 		debug        bool
 	}{
 		{
-			traceID128Str, spanIDStr, deprecatedParentSpanID, "1",
+			traceID128Str, spanID64Str, deprecatedParentSpanID, "1",
 			trace.SpanContextConfig{
 				TraceID:    traceID,
 				SpanID:     spanID,
@@ -56,7 +47,7 @@ func TestJaeger_Extract(t *testing.T) {
 			false,
 		},
 		{
-			traceID64Str, spanIDStr, deprecatedParentSpanID, "1",
+			traceID64Str, spanID64Str, deprecatedParentSpanID, "1",
 			trace.SpanContextConfig{
 				TraceID:    traceID,
 				SpanID:     spanID,
@@ -66,7 +57,17 @@ func TestJaeger_Extract(t *testing.T) {
 			false,
 		},
 		{
-			traceID128Str, spanIDStr, deprecatedParentSpanID, "3",
+			traceID60Str, spanID60Str, deprecatedParentSpanID, "1",
+			trace.SpanContextConfig{
+				TraceID:    traceID,
+				SpanID:     spanID,
+				TraceFlags: trace.FlagsSampled,
+			},
+			nil,
+			false,
+		},
+		{
+			traceID128Str, spanID64Str, deprecatedParentSpanID, "3",
 			trace.SpanContextConfig{
 				TraceID:    traceID,
 				SpanID:     spanID,
@@ -77,7 +78,7 @@ func TestJaeger_Extract(t *testing.T) {
 		},
 		{
 			// if we didn't set sampled bit when debug bit is 1, then assuming it's not sampled
-			traceID128Str, spanIDStr, deprecatedParentSpanID, "2",
+			traceID128Str, spanID64Str, deprecatedParentSpanID, "2",
 			trace.SpanContextConfig{
 				TraceID:    traceID,
 				SpanID:     spanID,
@@ -88,7 +89,7 @@ func TestJaeger_Extract(t *testing.T) {
 		},
 		{
 			// ignore firehose bit since we don't really have this feature in otel span context
-			traceID128Str, spanIDStr, deprecatedParentSpanID, "8",
+			traceID128Str, spanID64Str, deprecatedParentSpanID, "8",
 			trace.SpanContextConfig{
 				TraceID:    traceID,
 				SpanID:     spanID,
@@ -98,7 +99,7 @@ func TestJaeger_Extract(t *testing.T) {
 			false,
 		},
 		{
-			traceID128Str, spanIDStr, deprecatedParentSpanID, "9",
+			traceID128Str, spanID64Str, deprecatedParentSpanID, "9",
 			trace.SpanContextConfig{
 				TraceID:    traceID,
 				SpanID:     spanID,
@@ -108,7 +109,7 @@ func TestJaeger_Extract(t *testing.T) {
 			false,
 		},
 		{
-			traceID128Str, spanIDStr, "wired stuff", "1",
+			traceID128Str, spanID64Str, "wired stuff", "1",
 			trace.SpanContextConfig{
 				TraceID:    traceID,
 				SpanID:     spanID,
@@ -118,13 +119,13 @@ func TestJaeger_Extract(t *testing.T) {
 			false,
 		},
 		{
-			fmt.Sprintf("%32s", "This_is_a_string_len_64"), spanIDStr, deprecatedParentSpanID, "1",
+			fmt.Sprintf("%32s", "This_is_a_string_len_64"), spanID64Str, deprecatedParentSpanID, "1",
 			trace.SpanContextConfig{},
 			errMalformedTraceID,
 			false,
 		},
 		{
-			"000000000007b00000000000001c8", spanIDStr, deprecatedParentSpanID, "1",
+			"0000000000000007b00000000000001c8", spanID64Str, deprecatedParentSpanID, "1",
 			trace.SpanContextConfig{},
 			errInvalidTraceIDLength,
 			false,
@@ -136,7 +137,7 @@ func TestJaeger_Extract(t *testing.T) {
 			false,
 		},
 		{
-			traceID128Str, "0000000000010", deprecatedParentSpanID, "1",
+			traceID128Str, "00000000000000010", deprecatedParentSpanID, "1",
 			trace.SpanContextConfig{},
 			errInvalidSpanIDLength,
 			false,

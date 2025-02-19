@@ -1,18 +1,7 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
-package otellambda
+package otellambda // import "go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-lambda-go/otellambda"
 
 import (
 	"context"
@@ -24,12 +13,13 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	semconv "go.opentelemetry.io/otel/semconv/v1.7.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
 const (
-	tracerName = "go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-lambda-go/otellambda"
+	// ScopeName is the instrumentation scope name.
+	ScopeName = "go.opentelemetry.io/contrib/instrumentation/github.com/aws/aws-lambda-go/otellambda"
 )
 
 var errorLogger = log.New(log.Writer(), "OTel Lambda Error: ", 0)
@@ -51,12 +41,14 @@ func newInstrumentor(opts ...Option) instrumentor {
 		opt.apply(&cfg)
 	}
 
-	return instrumentor{configuration: cfg,
-		tracer:   cfg.TracerProvider.Tracer(tracerName, trace.WithInstrumentationVersion(SemVersion())),
-		resAttrs: []attribute.KeyValue{}}
+	return instrumentor{
+		configuration: cfg,
+		tracer:        cfg.TracerProvider.Tracer(ScopeName, trace.WithInstrumentationVersion(Version())),
+		resAttrs:      []attribute.KeyValue{},
+	}
 }
 
-// Logic to start OTel Tracing
+// Logic to start OTel Tracing.
 func (i *instrumentor) tracingBegin(ctx context.Context, eventJSON []byte) (context.Context, trace.Span) {
 	// Add trace id to context
 	mc := i.configuration.EventToCarrier(eventJSON)
@@ -72,7 +64,7 @@ func (i *instrumentor) tracingBegin(ctx context.Context, eventJSON []byte) (cont
 	}
 	if lc != nil {
 		ctxRequestID := lc.AwsRequestID
-		attributes = append(attributes, semconv.FaaSExecutionKey.String(ctxRequestID))
+		attributes = append(attributes, semconv.FaaSInvocationID(ctxRequestID))
 
 		// Some resource attrs added as span attrs because lambda
 		// resource detectors are created before a lambda
@@ -80,10 +72,10 @@ func (i *instrumentor) tracingBegin(ctx context.Context, eventJSON []byte) (cont
 		// Create these attrs upon first invocation
 		if len(i.resAttrs) == 0 {
 			ctxFunctionArn := lc.InvokedFunctionArn
-			attributes = append(attributes, semconv.FaaSIDKey.String(ctxFunctionArn))
+			attributes = append(attributes, semconv.AWSLambdaInvokedARN(ctxFunctionArn))
 			arnParts := strings.Split(ctxFunctionArn, ":")
 			if len(arnParts) >= 5 {
-				attributes = append(attributes, semconv.CloudAccountIDKey.String(arnParts[4]))
+				attributes = append(attributes, semconv.CloudAccountID(arnParts[4]))
 			}
 		}
 		attributes = append(attributes, i.resAttrs...)
@@ -94,7 +86,7 @@ func (i *instrumentor) tracingBegin(ctx context.Context, eventJSON []byte) (cont
 	return ctx, span
 }
 
-// Logic to wrap up OTel Tracing
+// Logic to wrap up OTel Tracing.
 func (i *instrumentor) tracingEnd(ctx context.Context, span trace.Span) {
 	span.End()
 

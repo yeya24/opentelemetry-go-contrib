@@ -1,16 +1,5 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package xrayconfig
 
@@ -19,10 +8,10 @@ package xrayconfig
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"runtime"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -104,7 +93,7 @@ var _ collectortracepb.TraceServiceServer = (*mockTraceService)(nil)
 var errAlreadyStopped = fmt.Errorf("already stopped")
 
 func (mc *mockCollector) stop() error {
-	var err = errAlreadyStopped
+	err := errAlreadyStopped
 	mc.stopOnce.Do(func() {
 		err = nil
 		if mc.stopFunc != nil {
@@ -180,12 +169,7 @@ func (l *listener) Addr() net.Addr { return l.wrapped.Addr() }
 func (l *listener) Accept() (net.Conn, error) {
 	conn, err := l.wrapped.Accept()
 	if err != nil {
-		// Go 1.16 exported net.ErrClosed that could clean up this check, but to
-		// remain backwards compatible with previous versions of Go that we
-		// support the following string evaluation is used instead to keep in line
-		// with the previously recommended way to check this:
-		// https://github.com/golang/go/issues/4373#issuecomment-353076799
-		if strings.Contains(err.Error(), "use of closed network connection") {
+		if errors.Is(err, net.ErrClosed) {
 			// If the listener has been closed, do not allow callers of
 			// WaitForConn to wait for a connection that will never come.
 			l.closeOnce.Do(func() { close(l.C) })
@@ -201,7 +185,7 @@ func (l *listener) Accept() (net.Conn, error) {
 	return conn, nil
 }
 
-// WaitForConn will wait indefintely for a connection to be estabilished with
+// WaitForConn will wait indefintely for a connection to be established with
 // the listener before returning.
 func (l *listener) WaitForConn() {
 	for {

@@ -1,25 +1,16 @@
 // Copyright The OpenTelemetry Authors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// SPDX-License-Identifier: Apache-2.0
 
 package test
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httptrace"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -102,7 +93,7 @@ func TestHTTPRequestWithClientTrace(t *testing.T) {
 			name: "http.getconn",
 			attributes: []attribute.KeyValue{
 				attribute.Key("http.remote").String(address.String()),
-				attribute.Key("http.host").String(address.String()),
+				attribute.Key("net.host.name").String(address.String()),
 				attribute.Key("http.conn.reused").Bool(false),
 				attribute.Key("http.conn.wasidle").Bool(false),
 			},
@@ -259,6 +250,22 @@ func TestEndBeforeStartCreatesSpan(t *testing.T) {
 	require.Len(t, spans, 1)
 }
 
+func TestEndBeforeStartWithoutSubSpansDoesNotPanic(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	tp := trace.NewTracerProvider(trace.WithSpanProcessor(sr))
+	otel.SetTracerProvider(tp)
+
+	ct := otelhttptrace.NewClientTrace(context.Background(), otelhttptrace.WithoutSubSpans())
+
+	require.NotPanics(t, func() {
+		ct.DNSDone(httptrace.DNSDoneInfo{})
+	})
+
+	// no spans created because we were just using background context without span
+	// and Start wasn't called which would have started a span
+	require.Empty(t, sr.Ended())
+}
+
 type clientTraceTestFixture struct {
 	Address      string
 	URL          string
@@ -297,9 +304,9 @@ func TestWithoutSubSpans(t *testing.T) {
 	require.NoError(t, err)
 	resp, err := fixture.Client.Do(req)
 	require.NoError(t, err)
-	resp.Body.Close()
+	require.NoError(t, resp.Body.Close())
 	// no spans created because we were just using background context without span
-	require.Len(t, fixture.SpanRecorder.Ended(), 0)
+	require.Empty(t, fixture.SpanRecorder.Ended())
 
 	// Start again with a "real" span in the context, now tracing should add
 	// events and annotations.
@@ -315,7 +322,7 @@ func TestWithoutSubSpans(t *testing.T) {
 	require.NoError(t, err)
 	resp, err = fixture.Client.Do(req)
 	require.NoError(t, err)
-	resp.Body.Close()
+	require.NoError(t, resp.Body.Close())
 	span.End()
 	// we just have the one span we created
 	require.Len(t, fixture.SpanRecorder.Ended(), 1)
@@ -325,10 +332,10 @@ func TestWithoutSubSpans(t *testing.T) {
 	require.Len(t, gotAttributes, 4)
 	assert.Equal(t,
 		[]attribute.KeyValue{
-			attribute.Key("http.host").String(fixture.Address),
-			attribute.Key("http.user-agent").String("oteltest/1.1"),
-			attribute.Key("http.authorization").String("****"),
-			attribute.Key("http.accept-encoding").String("gzip"),
+			attribute.Key("http.request.header.host").String(fixture.Address),
+			attribute.Key("http.request.header.user-agent").String("oteltest/1.1"),
+			attribute.Key("http.request.header.authorization").String("****"),
+			attribute.Key("http.request.header.accept-encoding").String("gzip"),
 		},
 		gotAttributes,
 	)
@@ -341,7 +348,7 @@ func TestWithoutSubSpans(t *testing.T) {
 		{"http.getconn.start", func(t *testing.T, got attrMap) {
 			assert.Equal(t,
 				attribute.StringValue(fixture.Address),
-				got[attribute.Key("http.host")],
+				got[attribute.Key("net.host.name")],
 			)
 		}},
 		{"http.getconn.done", func(t *testing.T, got attrMap) {
@@ -400,7 +407,7 @@ func TestWithRedactedHeaders(t *testing.T) {
 	require.NoError(t, err)
 	resp, err := fixture.Client.Do(req)
 	require.NoError(t, err)
-	resp.Body.Close()
+	require.NoError(t, resp.Body.Close())
 	span.End()
 	require.Len(t, fixture.SpanRecorder.Ended(), 1)
 	recSpan := fixture.SpanRecorder.Ended()[0]
@@ -408,9 +415,9 @@ func TestWithRedactedHeaders(t *testing.T) {
 	gotAttributes := recSpan.Attributes()
 	assert.Equal(t,
 		[]attribute.KeyValue{
-			attribute.Key("http.host").String(fixture.Address),
-			attribute.Key("http.user-agent").String("****"),
-			attribute.Key("http.accept-encoding").String("gzip"),
+			attribute.Key("http.request.header.host").String(fixture.Address),
+			attribute.Key("http.request.header.user-agent").String("****"),
+			attribute.Key("http.request.header.accept-encoding").String("gzip"),
 		},
 		gotAttributes,
 	)
@@ -430,13 +437,13 @@ func TestWithoutHeaders(t *testing.T) {
 	require.NoError(t, err)
 	resp, err := fixture.Client.Do(req)
 	require.NoError(t, err)
-	resp.Body.Close()
+	require.NoError(t, resp.Body.Close())
 	span.End()
 	require.Len(t, fixture.SpanRecorder.Ended(), 1)
 	recSpan := fixture.SpanRecorder.Ended()[0]
 
 	gotAttributes := recSpan.Attributes()
-	require.Len(t, gotAttributes, 0)
+	require.Empty(t, gotAttributes)
 }
 
 func TestWithInsecureHeaders(t *testing.T) {
@@ -455,7 +462,7 @@ func TestWithInsecureHeaders(t *testing.T) {
 	require.NoError(t, err)
 	resp, err := fixture.Client.Do(req)
 	require.NoError(t, err)
-	resp.Body.Close()
+	require.NoError(t, resp.Body.Close())
 	span.End()
 	require.Len(t, fixture.SpanRecorder.Ended(), 1)
 	recSpan := fixture.SpanRecorder.Ended()[0]
@@ -463,10 +470,10 @@ func TestWithInsecureHeaders(t *testing.T) {
 	gotAttributes := recSpan.Attributes()
 	assert.Equal(t,
 		[]attribute.KeyValue{
-			attribute.Key("http.host").String(fixture.Address),
-			attribute.Key("http.user-agent").String("oteltest/1.1"),
-			attribute.Key("http.authorization").String("Bearer token123"),
-			attribute.Key("http.accept-encoding").String("gzip"),
+			attribute.Key("http.request.header.host").String(fixture.Address),
+			attribute.Key("http.request.header.user-agent").String("oteltest/1.1"),
+			attribute.Key("http.request.header.authorization").String("Bearer token123"),
+			attribute.Key("http.request.header.accept-encoding").String("gzip"),
 		},
 		gotAttributes,
 	)
@@ -503,4 +510,41 @@ func TestHTTPRequestWithTraceContext(t *testing.T) {
 
 	require.Equal(t, parent.SpanContext().TraceID(), getconn.SpanContext().TraceID())
 	require.Equal(t, parent.SpanContext().SpanID(), getconn.Parent().SpanID())
+}
+
+func TestHTTPRequestWithExpect100Continue(t *testing.T) {
+	fixture := prepareClientTraceTest(t)
+
+	ctx, span := otel.Tracer("oteltest").Start(context.Background(), "root")
+	ctx = httptrace.WithClientTrace(ctx, otelhttptrace.NewClientTrace(ctx))
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fixture.URL, bytes.NewReader([]byte("test")))
+	require.NoError(t, err)
+
+	// Set Expect: 100-continue
+	req.Header.Set("Expect", "100-continue")
+	resp, err := fixture.Client.Do(req)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	span.End()
+
+	// Wait for http.send span as per https://pkg.go.dev/net/http/httptrace#ClientTrace:
+	// Functions may be called concurrently from different goroutines and some may be called
+	// after the request has completed
+	var httpSendSpan trace.ReadOnlySpan
+	require.Eventually(t, func() bool {
+		var ok bool
+		httpSendSpan, ok = getSpanFromRecorder(fixture.SpanRecorder, "http.send")
+		return ok
+	}, 5*time.Second, 10*time.Millisecond)
+
+	// Found http.send span must contain "GOT 100 - Wait" event
+	found := false
+	for _, v := range httpSendSpan.Events() {
+		if v.Name == "GOT 100 - Wait" {
+			found = true
+			break
+		}
+	}
+	require.True(t, found)
 }
